@@ -291,14 +291,14 @@ class TXEncoder(nn.Module):
                 )
         elif not self.use_flash and key_padding_mask is not None:
             # without flash unpadding, padded keys must be masked via attn_bias
-            b_size, s_k = key_padding_mask.shape[:2]
-            attn_bias = torch.zeros(
-                (b_size, 1, 1, s_k),
-                dtype=total_embs.dtype,
-                device=total_embs.device,
-            ).masked_fill(
-                ~key_padding_mask.view((b_size, 1, 1, s_k)),
-                torch.finfo(total_embs.dtype).min,
+            attn_bias = torch.where(
+                key_padding_mask.unsqueeze(1).unsqueeze(2),  # (B, 1, 1, S)
+                torch.tensor(0.0, dtype=total_embs.dtype, device=total_embs.device),
+                torch.tensor(
+                    torch.finfo(total_embs.dtype).min,
+                    dtype=total_embs.dtype,
+                    device=total_embs.device,
+                ),
             )
         for mod in self.layers:
             total_embs = mod(
