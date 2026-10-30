@@ -236,6 +236,7 @@ class TXEncoder(nn.Module):
         if attn_config is None:
             attn_config = attn_config_defaults
         self.use_attn_mask = attn_config.get("use_attn_mask", True)
+        self.use_flash = attn_config.get("attn_impl", "triton") == "flash"
         if self.use_norm:
             if norm_config is None:
                 norm_config = norm_config_defaults
@@ -253,13 +254,15 @@ class TXEncoder(nn.Module):
         gen_mask: Optional[Tensor] = None,
     ) -> Tensor:
 
-        flash_attn_padding_info = gen_flash_attn_padding_info(
-            bsz=total_embs.shape[0],
-            S=total_embs.shape[1],
-            past_key_len=0,
-            attention_mask=key_padding_mask,
-            device=total_embs.device,
-        )
+        flash_attn_padding_info = None
+        if self.use_flash:
+            flash_attn_padding_info = gen_flash_attn_padding_info(
+                bsz=total_embs.shape[0],
+                S=total_embs.shape[1],
+                past_key_len=0,
+                attention_mask=key_padding_mask,
+                device=total_embs.device,
+            )
 
         attn_bias = None
         if self.use_attn_mask:
@@ -286,6 +289,17 @@ class TXEncoder(nn.Module):
                     ~key_padding_mask.view((b_size, 1, 1, s_k)),
                     torch.finfo(total_embs.dtype).min,
                 )
+        elif not self.use_flash and key_padding_mask is not None:
+            # without flash unpadding, padded keys must be masked via attn_bias
+            b_size, s_k = key_padding_mask.shape[:2]
+            attn_bias = torch.zeros(
+                (b_size, 1, 1, s_k),
+                dtype=total_embs.dtype,
+                device=total_embs.device,
+            ).masked_fill(
+                ~key_padding_mask.view((b_size, 1, 1, s_k)),
+                torch.finfo(total_embs.dtype).min,
+            )
         for mod in self.layers:
             total_embs = mod(
                 total_embs,

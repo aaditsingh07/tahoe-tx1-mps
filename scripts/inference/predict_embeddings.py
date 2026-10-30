@@ -24,7 +24,7 @@ from omegaconf import DictConfig
 from omegaconf import OmegaConf as om
 
 from tahoe_x1.model import ComposerTX
-from tahoe_x1.utils.util import load_model, loader_from_adata
+from tahoe_x1.utils.util import get_device, load_model, loader_from_adata
 
 log = logging.getLogger(__name__)
 logging.basicConfig(
@@ -34,7 +34,7 @@ logging.basicConfig(
 
 
 def predict_embeddings(cfg: DictConfig) -> None:
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device()
 
     # retrieve configuration parameters
     model_name = cfg.get("model_name", None)
@@ -104,7 +104,7 @@ def predict_embeddings(cfg: DictConfig) -> None:
 
     trainer = Trainer(
         model=model,
-        device="gpu" if torch.cuda.is_available() else "cpu",
+        device={"cuda": "gpu"}.get(device.type, device.type),
     )
 
     predictions = trainer.predict(loader, return_outputs=True)

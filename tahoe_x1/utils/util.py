@@ -19,6 +19,23 @@ from sklearn.neighbors import kneighbors_graph
 from tahoe_x1.tokenizer import GeneVocab
 
 
+def get_device() -> torch.device:
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
+def set_attn_impl_for_device(model_config: DictConfig) -> None:
+    if model_config["attn_config"]["attn_impl"] == "triton":
+        model_config["attn_config"]["attn_impl"] = "flash"
+        model_config["attn_config"]["use_attn_mask"] = False
+    # flash-attn kernels are CUDA-only; fall back to torch SDPA elsewhere (e.g. MPS)
+    if not torch.cuda.is_available():
+        model_config["attn_config"]["attn_impl"] = "torch"
+
+
 def load_model(
     model_dir: str,
     device: torch.device,
@@ -33,9 +50,7 @@ def load_model(
     ckpt = os.path.join(model_dir, "best-model.pt")
 
     model_config = om.load(model_config_path)
-    if model_config["attn_config"]["attn_impl"] == "triton":
-        model_config["attn_config"]["attn_impl"] = "flash"
-        model_config["attn_config"]["use_attn_mask"] = False
+    set_attn_impl_for_device(model_config)
 
     model_config["do_mlm"] = False  # Disable MLM for embeddings generation
     model_config["return_gene_embeddings"] = return_gene_embeddings
@@ -61,7 +76,7 @@ def load_model(
         collator_config=collator_config,
     )
     model.load_state_dict(
-        torch.load(ckpt, weights_only=False)["state"]["model"],
+        torch.load(ckpt, weights_only=False, map_location="cpu")["state"]["model"],
         strict=strict,
     )
     model.to(device)

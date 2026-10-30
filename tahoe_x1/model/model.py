@@ -26,6 +26,7 @@ from tahoe_x1.model.blocks import (
     init_config_defaults,
 )
 from tahoe_x1.tokenizer import GeneVocab
+from tahoe_x1.utils.util import get_device, set_attn_impl_for_device
 
 log = logging.getLogger(__name__)
 
@@ -450,9 +451,7 @@ class ComposerTX(ComposerModel):
 
         # load and edit attention implementation if needed
         model_config = om.load(model_cfg_path)
-        if model_config["attn_config"]["attn_impl"] == "triton":
-            model_config["attn_config"]["attn_impl"] = "flash"
-            model_config["attn_config"]["use_attn_mask"] = False
+        set_attn_impl_for_device(model_config)
 
         # set up model config for inference
         model_config["do_mlm"] = False
@@ -477,7 +476,6 @@ class ComposerTX(ComposerModel):
             collator_config=collator_config,
         )
         model.load_state_dict(model_state_dict, strict=strict)
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model.to(device)
+        model.to(get_device())
         model.eval()
         return model, vocab, model_config, collator_config
