@@ -42,7 +42,7 @@ _MPS_AUTOCAST_DTYPES = {
 
 def _mps_precision_context(precision: Optional[str]) -> ContextManager:
     # No setting means Composer's default, which is fp16 on MPS
-    precision = Precision(precision or Precision.FP16)
+    precision = Precision(precision or Precision.AMP_FP16)
     if precision == Precision.AMP_FP8:
         raise ValueError(f"{precision.value} is not supported on MPS.")
     if precision == Precision.FP32:
