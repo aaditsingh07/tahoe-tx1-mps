@@ -12,14 +12,16 @@ Example usage:
     python scripts/inference/predict_embeddings.py configs/predict.yaml [--key=value ...]
 """
 
+import contextlib
 import logging
 import sys
-from typing import List
+from typing import ContextManager, List, Optional
 
 import numpy as np
 import scanpy as sc
 import torch
 from composer import Trainer
+from composer.core import Precision
 from omegaconf import DictConfig
 from omegaconf import OmegaConf as om
 
@@ -31,6 +33,27 @@ logging.basicConfig(
     format="%(asctime)s: [%(process)d][%(threadName)s]: %(levelname)s: %(name)s: %(message)s",
     level=logging.INFO,
 )
+
+_MPS_AUTOCAST_DTYPES = {
+    Precision.AMP_FP16: torch.float16,
+    Precision.AMP_BF16: torch.bfloat16,
+}
+
+
+def _mps_precision_context(precision: Optional[str]) -> ContextManager:
+    # No setting means Composer's default, which is fp16 on MPS
+    precision = Precision(precision or Precision.FP16)
+    if precision == Precision.AMP_FP8:
+        raise ValueError(f"{precision.value} is not supported on MPS.")
+    if precision == Precision.FP32:
+        return contextlib.nullcontext()
+    # Composer's AMP contexts are no-ops on MPS (composer/core/precision.py)
+    dtype = _MPS_AUTOCAST_DTYPES[precision]
+    log.warning(
+        f"Composer's {precision.value} has no effect on MPS; "
+        f"using torch.autocast with {dtype} instead.",
+    )
+    return torch.autocast("mps", dtype=dtype)
 
 
 def predict_embeddings(cfg: DictConfig) -> None:
@@ -46,6 +69,12 @@ def predict_embeddings(cfg: DictConfig) -> None:
     num_workers = cfg.predict.get("num_workers", 8)
     prefetch_factor = cfg.predict.get("prefetch_factor", 48)
     adata_output_path = cfg.paths.get("adata_output", None)
+    precision = cfg.predict.get("precision", None)
+    precision_context = (
+        _mps_precision_context(precision)
+        if device.type == "mps"
+        else contextlib.nullcontext()
+    )
 
     # load model from local dir or HF
     model_dir = cfg.paths.get("model_dir", None)
@@ -105,9 +134,11 @@ def predict_embeddings(cfg: DictConfig) -> None:
     trainer = Trainer(
         model=model,
         device={"cuda": "gpu"}.get(device.type, device.type),
+        precision=precision,
     )
 
-    predictions = trainer.predict(loader, return_outputs=True)
+    with precision_context:
+        predictions = trainer.predict(loader, return_outputs=True)
 
     log.info("Aggregating embeddings…")
     cell_embs: List[torch.Tensor] = []
@@ -117,10 +148,10 @@ def predict_embeddings(cfg: DictConfig) -> None:
         gene_ids_list: List[torch.Tensor] = []
 
     for out in predictions:
-        cell_embs.append(out["cell_emb"].cpu())
+        cell_embs.append(out["cell_emb"].float().cpu())
 
         if return_gene_embeddings:
-            gene_embs.append(out["gene_emb"].cpu())
+            gene_embs.append(out["gene_emb"].float().cpu())
             gene_ids_list.append(out["gene_ids"].cpu())
 
     """Concatenate and finalize cell and gene embeddings."""

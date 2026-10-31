@@ -18,3 +18,4 @@ predict:
   prefetch_factor: 48 #2
   return_gene_embeddings: False  # Whether to extract gene embeddings
   use_chem_inf: False  # Whether to use chemical information for prediction if the model is trained with chemical information
+  # precision: "amp_fp16"  # fp32, amp_fp16 or amp_bf16 (amp_fp8 is CUDA only). Default: amp_fp16 on CUDA, fp16 on MPS and fp32 on CPU
