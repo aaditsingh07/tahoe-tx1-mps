@@ -142,3 +142,14 @@ explicit = true
 [tool.uv.sources]
 torch = { index = "pytorch" }
 torchvision = { index = "pytorch" }
+
+[tool.uv]
+# llm-foundry and mosaicml pin torch<2.7.1; override on macOS for the fused MPS
+# attention kernel. uv drops a package on platforms an override's marker excludes,
+# so other platforms need an explicit entry too (2.7.0 is what they resolve to anyway).
+override-dependencies = [
+    "torch==2.15.0; sys_platform == 'darwin'",
+    "torchvision==0.29.2; sys_platform == 'darwin'",
+    "torch==2.7.0; sys_platform != 'darwin'",
+    "torchvision==0.22.0; sys_platform != 'darwin'",
+]

@@ -53,7 +53,9 @@ classifiers = [
 
 install_requires = [
     "awscli>=1.32,<2.0",  # For AWS S3 data access authentication
-    "llm-foundry[gpu]>=0.17.1,<1.0",
+    "llm-foundry[gpu]>=0.17.1,<1.0; sys_platform != 'darwin'",
+    "llm-foundry>=0.17.1,<1.0; sys_platform == 'darwin'",
+    "setuptools<81; sys_platform == 'darwin'",  # llm-foundry imports pkg_resources
     "mosaicml-streaming>=0.7.0,<1.0",
     "torch>=2.5.0,<3.0",
     "scanpy>=1.9.0,<2.0",

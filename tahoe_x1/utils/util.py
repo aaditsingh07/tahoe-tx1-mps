@@ -31,8 +31,9 @@ def set_attn_impl_for_device(model_config: DictConfig) -> None:
     if model_config["attn_config"]["attn_impl"] == "triton":
         model_config["attn_config"]["attn_impl"] = "flash"
         model_config["attn_config"]["use_attn_mask"] = False
-    # flash-attn kernels are CUDA-only; elsewhere (e.g. MPS) use llm-foundry's
-    # plain-PyTorch attention (explicit matmul + softmax)
+    # flash-attn kernels are CUDA-only; elsewhere (e.g. MPS) TXBlock skips
+    # llm-foundry's attention function and calls torch SDPA directly. "torch"
+    # is still set so llm-foundry can build the attention module (its weights).
     if not torch.cuda.is_available():
         model_config["attn_config"]["attn_impl"] = "torch"
 

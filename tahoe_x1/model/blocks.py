@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional, Union
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from composer.utils import dist
 from llmfoundry.layers_registry import attention_classes, norms
 from llmfoundry.models.layers.ffn import (
@@ -103,6 +104,7 @@ class TXBlock(nn.Module):
         self.d_model = d_model
         self.n_heads = n_heads
         self.device = device
+        self.use_flash = attn_config.get("attn_impl", "triton") == "flash"
         self.self_attn = attn_class(
             d_model=d_model,
             n_heads=n_heads,
@@ -184,13 +186,39 @@ class TXBlock(nn.Module):
         attn_bias: Optional[Tensor] = None,
         flash_attn_padding_info: Optional[Tensor] = None,
     ) -> Tensor:
-        x, _, _ = self.self_attn(
-            x,
-            attn_bias=attn_bias,
-            flash_attn_padding_info=flash_attn_padding_info,
-            is_causal=False,
-        )
+        if self.use_flash:
+            x, _, _ = self.self_attn(
+                x,
+                attn_bias=attn_bias,
+                flash_attn_padding_info=flash_attn_padding_info,
+                is_causal=False,
+            )
+        else:
+            x = self._sdpa_attn(x, attn_bias=attn_bias)
         return self.post_sa_dropout(x)
+
+    def _sdpa_attn(self, x: Tensor, attn_bias: Optional[Tensor] = None) -> Tensor:
+        # Bypass llm-foundry's attention function and call torch SDPA directly,
+        # reusing the module's projection weights so checkpoints load unchanged.
+        attn = self.self_attn
+        batch, seq_len, _ = x.shape
+        query, key, value = attn.get_qkv(x)
+        query = query.view(batch, seq_len, attn.n_heads, -1).transpose(1, 2)  # (B, H, S, D)
+        key = key.view(batch, seq_len, attn.kv_n_heads, -1).transpose(1, 2)
+        value = value.view(batch, seq_len, attn.kv_n_heads, -1).transpose(1, 2)
+        if attn_bias is not None:
+            attn_bias = attn_bias.to(query.dtype)  # SDPA needs mask dtype == query dtype
+        out = F.scaled_dot_product_attention(
+            query,
+            key,
+            value,
+            attn_mask=attn_bias,
+            dropout_p=attn.attn_dropout_p if self.training else 0.0,
+            scale=attn.softmax_scale,
+            enable_gqa=attn.kv_n_heads != attn.n_heads,
+        )
+        out = out.transpose(1, 2).reshape(batch, seq_len, -1)  # (B, S, H * D)
+        return attn.out_proj(out)
 
     def _ff_block(self, x: Tensor) -> Tensor:
         if self.use_glu:
