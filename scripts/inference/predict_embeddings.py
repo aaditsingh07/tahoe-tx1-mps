@@ -15,7 +15,7 @@ Example usage:
 import contextlib
 import logging
 import sys
-from typing import ContextManager, List, Optional
+from typing import ContextManager, List
 
 import numpy as np
 import scanpy as sc
@@ -40,9 +40,8 @@ _MPS_AUTOCAST_DTYPES = {
 }
 
 
-def _mps_precision_context(precision: Optional[str]) -> ContextManager:
-    # No setting means Composer's default, which is fp16 on MPS
-    precision = Precision(precision or Precision.AMP_FP16)
+def _mps_precision_context(precision: str) -> ContextManager:
+    precision = Precision(precision)
     if precision == Precision.AMP_FP8:
         raise ValueError(f"{precision.value} is not supported on MPS.")
     if precision == Precision.FP32:
@@ -70,11 +69,11 @@ def predict_embeddings(cfg: DictConfig) -> None:
     prefetch_factor = cfg.predict.get("prefetch_factor", 48)
     adata_output_path = cfg.paths.get("adata_output", None)
     precision = cfg.predict.get("precision", None)
-    precision_context = (
-        _mps_precision_context(precision)
-        if device.type == "mps"
-        else contextlib.nullcontext()
-    )
+    precision_context = contextlib.nullcontext()
+    if device.type == "mps":
+        # This script's default on MPS; Composer's own default there is fp32
+        precision = precision or Precision.AMP_FP16.value
+        precision_context = _mps_precision_context(precision)
 
     # load model from local dir or HF
     model_dir = cfg.paths.get("model_dir", None)
